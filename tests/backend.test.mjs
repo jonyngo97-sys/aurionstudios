@@ -9,3 +9,20 @@ function req(path,method='GET',body=null,headers={}){return new Request('https:/
 test('Admin closed without secret, public catalog available',async()=>{const w=new AurionStore({storage:store()},{});assert.equal((await w.fetch(req('admin/session'))).status,503);assert.equal((await w.fetch(req('public/catalog'))).status,200)});
 test('Secure login, CSRF, optimistic locking, rotation and logout',async()=>{const password='long-test-password-1234';const env={ADMIN_PASSWORD_HASH:await sha(password)};const w=new AurionStore({storage:store()},env);assert.equal((await w.fetch(req('admin/catalog'))).status,401);assert.equal((await w.fetch(req('admin/login','POST',{username:'admin',password},{Origin:'https://evil.test'}))).status,403);const r=await w.fetch(req('admin/login','POST',{username:'admin',password}));assert.equal(r.status,200);const cookie=r.headers.get('Set-Cookie');for(const flag of ['HttpOnly','Secure','SameSite=Strict'])assert.ok(cookie.includes(flag));const {csrf}=await r.json();const headers={Cookie:cookie.split(';')[0],'X-CSRF-Token':csrf};assert.equal((await w.fetch(req('admin/session','GET',null,headers))).status,200);assert.equal((await w.fetch(req('admin/catalog','PUT',copy(),{Cookie:headers.Cookie}))).status,403);assert.equal((await w.fetch(req('admin/catalog','PUT',copy(),headers))).status,200);assert.equal((await w.fetch(req('admin/catalog','PUT',copy(),headers))).status,409);env.ADMIN_PASSWORD_HASH=await sha('another-password-1234');assert.equal((await w.fetch(req('admin/session','GET',null,headers))).status,401);env.ADMIN_PASSWORD_HASH=await sha(password);assert.equal((await w.fetch(req('admin/logout','POST',{},headers))).status,200);assert.equal((await w.fetch(req('admin/session','GET',null,headers))).status,401)});
 test('Rate limit blocks repeated guessing',async()=>{const w=new AurionStore({storage:store()},{ADMIN_PASSWORD_HASH:await sha('password-123456789')});for(let i=0;i<5;i++)assert.equal((await w.fetch(req('admin/login','POST',{username:'admin',password:'wrong'}))).status,401);assert.equal((await w.fetch(req('admin/login','POST',{username:'admin',password:'wrong'}))).status,429)});
+test('Image upload requires authentication and CSRF and persists chunked image bytes',async()=>{
+ const password='image-password-123456';const storage=store();const env={ADMIN_PASSWORD_HASH:await sha(password)};const w=new AurionStore({storage},env);
+ const bytes=new Uint8Array(130000);bytes.set([137,80,78,71,13,10,26,10]);
+ const upload=(headers={},data=bytes,type='image/png')=>new Request('https://aurion.test/api/admin/images',{method:'POST',headers:{Origin:'https://aurion.test','Content-Type':type,...headers},body:data});
+ assert.equal((await w.fetch(upload())).status,401);
+ const login=await w.fetch(req('admin/login','POST',{username:'admin',password}));const cookie=login.headers.get('Set-Cookie').split(';')[0];const {csrf}=await login.json();const headers={Cookie:cookie,'X-CSRF-Token':csrf};
+ assert.equal((await w.fetch(upload({Cookie:cookie}))).status,403);
+ assert.equal((await w.fetch(upload(headers,new TextEncoder().encode('<svg>unsafe</svg>'),'image/svg+xml'))).status,415);
+ assert.equal((await w.fetch(upload(headers,new Uint8Array(32)))).status,400);
+ assert.equal((await w.fetch(upload(headers,new Uint8Array(2*1024*1024+1)))).status,413);
+ const result=await w.fetch(upload(headers));assert.equal(result.status,201);const {url}=await result.json();assert.match(url,/^\/api\/media\/[a-f0-9-]{36}$/);
+ const restarted=new AurionStore({storage},env);const image=await restarted.fetch(new Request('https://aurion.test'+url));assert.equal(image.status,200);assert.equal(image.headers.get('Content-Type'),'image/png');assert.deepEqual(new Uint8Array(await image.arrayBuffer()),bytes);
+ const c=copy();c.products[0].images=[url];assert.equal(validateCatalog(c).products[0].images[0],url);
+ const saved=await w.fetch(req('admin/catalog','PUT',c,headers));assert.equal(saved.status,200);
+ assert.equal((await restarted.fetch(req('public/catalog'))).status,200);
+ assert.equal((await restarted.fetch(new Request('https://aurion.test/api/media/00000000-0000-0000-0000-000000000000'))).status,404);
+});

@@ -13,7 +13,7 @@ export function publicCatalog(catalog,now=Date.now()){
 function text(value,max,required=false){if(typeof value!=='string'||value.length>max||(required&&!value.trim()))throw new Error('Ungültiger Text');return value.trim()}
 function status(value){if(!['draft','published'].includes(value))throw new Error('Ungültiger Status');return value}
 function date(value){const v=text(value,40);if(v&&!Number.isFinite(Date.parse(v)))throw new Error('Ungültiges Datum');return v}
-function image(value){const v=text(value,2000,true);if(/^\/assets\/[a-zA-Z0-9_./-]+$/.test(v)&&!v.includes('..'))return v;const url=new URL(v);if(url.protocol!=='https:')throw new Error('Bild benötigt HTTPS');return v}
+function image(value){const v=text(value,2000,true);if((/^\/assets\/[a-zA-Z0-9_./-]+$/.test(v)||/^\/api\/media\/[a-f0-9-]{36}$/.test(v))&&!v.includes('..'))return v;const url=new URL(v);if(url.protocol!=='https:')throw new Error('Bild benötigt HTTPS');return v}
 function money(value){if(!Number.isInteger(value)||value<0||value>10000000)throw new Error('Ungültiger Preis');return value}
 export function validateCatalog(body){
  if(!body||!Number.isInteger(body.revision))throw new Error('Revision fehlt');
